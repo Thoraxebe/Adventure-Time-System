@@ -12,6 +12,17 @@ A modular HUD for **time and calendar management** in AI Dungeon. It provides:
 
 ---
 
+## Features
+- Clock & time control: `/time set|add|undo`, per-turn tick
+- NL parsing: phrases like "after a while", "the next morning", "X hours later"
+- Calendar parsing: Holidays, Events, recurring rules, ranges, overnight
+- Banner: daily rollover with moon phase, holidays/events
+- Alternative calendars: Islamic (tabular), Chinese (approx.)
+- Settings & Names cards: toggles and localization
+- Characters & Ages: add `DOB: YYYY-MM-DD` to character cards; SYSTEM CONTEXT lists age
+
+---
+
 ## File Layout
 - **Library.js** – Core engine: clock, NL parser, calendar parsing, banner, moon phase, Islamic/Chinese calendars, settings UI.
 - **Input.js** – Input modifier: routes text through ATS input hooks.
@@ -78,17 +89,6 @@ config: {
 }
 ```
 These values affect NL parsing (e.g., "wait until morning", "next weekend") and banner rendering.
-
----
-
-## Features
-- Clock & time control: `/time set|add|undo`, per-turn tick
-- NL parsing: phrases like "after a while", "the next morning", "X hours later"
-- Calendar parsing: Holidays, Events, recurring rules, ranges, overnight
-- Banner: daily rollover with moon phase, holidays/events
-- Alternative calendars: Islamic (tabular), Chinese (approx.)
-- Settings & Names cards: toggles and localization
-- Characters & Ages: add `DOB: YYYY-MM-DD` to character cards; SYSTEM CONTEXT lists age
 
 ---
 
