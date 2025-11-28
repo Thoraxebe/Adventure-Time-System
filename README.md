@@ -32,10 +32,10 @@ A modular HUD for **time and calendar management** in AI Dungeon. It provides:
 ---
 
 ## Quick Start
-1. Paste `Library.js` into a Script slot.
-2. Paste `Input.js` into the Input Modifier.
-3. Paste `Output.js` into the Output Modifier.
-4. Paste `Context.js` into the Context Modifier.
+1. Paste the content of `Library.js` into Library .
+2. Paste the content of `Input.js` into the Input.
+3. Paste the content of `Output.js` into the Output.
+4. Paste the content of `Context.js` into the Context.
 
 On first run, ATS auto-creates **Time**, **Calendar**, **Time Settings**, and **Calendar Names** cards.
 
