@@ -90,15 +90,49 @@ Recognizes many phrasings (e.g., *“after a while”*, *“the next morning”*
 
 ---
 
+## Changing Standards (Start Date, Dawn/Dusk, Morning, Weekend)
+
+### Change Start Date & Time
+Use the slash command:
+```
+/time set YYYY-MM-DD HH:MM
+```
+Example:
+```
+/time set 2050-01-01 09:00
+```
+This sets the in-world clock to your chosen date and time. All age calculations, events, and banners will use this new standard.
+
+### Change Dawn/Dusk & Morning Hour
+Defaults:
+```
+dawnHour: 5
+dawnMinute: 30
+duskHour: 19
+duskMinute: 15
+morningHour: 8
+weekendStart: { weekday: 6, hour: 9, minute: 0 }
+```
+To change these:
+1. Open the **Time Settings** card.
+2. Edit the body lines to include your new values, for example:
+```
+dawnHour: 4
+dawnMinute: 45
+duskHour: 20
+duskMinute: 10
+morningHour: 7
+weekendStart: { weekday: 5, hour: 8, minute: 0 }
+```
+3. Submit a turn; changes apply immediately.
+
+These values affect NL parsing for phrases like "wait until morning" or "next weekend" and banner rendering.
+
+---
+
+
 ## Troubleshooting
 
 - **NL didn’t advance time**: Rephrase with an action verb (e.g., *“talk for an hour”*) or use `/time add 1h`.
 - **Banner didn’t print**: It’s suppressed on report‑only turns (after a slash command) and prints on day change; ensure `/hud banner on`.
 - **Cards out of order**: The engine calls order enforcement each turn; if you edit cards heavily, a fresh turn will realign them.
-
----
-
-## Notes
-- ES5‑safe, defensive guards (`try/catch`) throughout
-- Hidden SYSTEM CONTEXT is appended once per turn; it’s not displayed to players but guides the LLM
-
