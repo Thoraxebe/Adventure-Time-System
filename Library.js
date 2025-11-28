@@ -20,7 +20,7 @@
   if (!state._ats) {
     state._ats = {
       version: '4.19.10h-patched',
-      clock: { year: 2071, month: 8, day: 25, hour: 8, minute: 0, minutesPerTurn: 5, elapsedMinutes: 0 },
+      clock: { year: 2025, month: 11, day: 28, hour: 8, minute: 0, minutesPerTurn: 5, elapsedMinutes: 0 },
       config: {
         showIslamic: true,
         showChinese: true,
@@ -2250,3 +2250,4 @@ function ensureSettingsCard() {
     "Editing is safe. Commands are idempotent."
   ]);
 }
+
