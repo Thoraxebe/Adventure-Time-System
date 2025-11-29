@@ -1224,32 +1224,44 @@ function injectCalendarInstructionsAndExamplesToNotes(calIdx){
   ];
   ensureNotes(calIdx, NOTES_MARKER_CAL_INSTR, lines.concat([""]).concat(examples));
 }
-function ensureCalendarCard(){
-  if (cardIndexIsValid(ATS.cards.calendarIdx)){
-    try{
+
+function ensureCalendarCard() {
+  // Helper: does this card look like a real ATS Calendar card?
+  function isRealCalendarCard(wi) {
+    return wi && String(wi.keys || "") === "__hud_calendar__" &&
+           (wi.entry || wi.value || wi.text || "").indexOf("[[ATS AUTO CONTEXT]]") !== -1;
+  }
+
+  if (cardIndexIsValid(ATS.cards.calendarIdx)) {
+    try {
       var wi = worldInfo[ATS.cards.calendarIdx];
-      wi.title = "Calendar";
+      if (isRealCalendarCard(wi)) {
+        wi.title = "Calendar";
+      }
       injectCalendarInstructionsAndExamplesToNotes(ATS.cards.calendarIdx);
-    }catch(_){}
+    } catch (_) {}
     return;
   }
   var idx = null;
-  if (Array.isArray(worldInfo)){
-    for (var i=0;i<worldInfo.length;i++){
+  if (Array.isArray(worldInfo)) {
+    for (var i = 0; i < worldInfo.length; i++) {
       var wi = worldInfo[i];
-      if (wi && String(wi.keys||"")==="__hud_calendar__"){ idx=i; break; }
+      if (isRealCalendarCard(wi)) { idx = i; break; }
     }
   }
-  if (idx != null){
+  if (idx != null) {
     ATS.cards.calendarIdx = idx;
-    try{
+    try {
       var wi = worldInfo[idx];
-      wi.title = "Calendar";
+      if (isRealCalendarCard(wi)) {
+        wi.title = "Calendar";
+      }
       injectCalendarInstructionsAndExamplesToNotes(idx);
-    }catch(_){}
+    } catch (_) {}
     return;
   }
   var template = [
+    "[[ATS AUTO CONTEXT]]",
     "CALENDAR",
     "",
     "-----Holiday-----",
@@ -1261,8 +1273,14 @@ function ensureCalendarCard(){
   ].join("\n");
   var newIdx = addWorldEntry("__hud_calendar__", template);
   ATS.cards.calendarIdx = newIdx;
-  try{ worldInfo[newIdx].title = "Calendar"; }catch(_){}
+  try {
+    var wi = worldInfo[newIdx];
+    if (isRealCalendarCard(wi)) {
+      wi.title = "Calendar";
+    }
+  } catch (_) {}
 }
+
 try{ globalThis.ensureCalendarCard = ensureCalendarCard; }catch(_){}
 
 /* Read Calendar text */
