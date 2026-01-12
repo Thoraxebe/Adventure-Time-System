@@ -2,35 +2,80 @@
 /// <reference lib="es2022"/>
 /* ES5-safe Context injector: minimal, relies on Library.js */
 
-// Build hidden summary for LLM
-function buildContextSummary() {
-  var timeCard = ATS.utils.findCardIndexByMarker("[[ATS:TIME]]");
-  var calCard = ATS.utils.findCardIndexByMarker("[[ATS AUTO CONTEXT]]");
-  var summary = "### SYSTEM CONTEXT ###\n";
-  if (timeCard) { summary += "Current Time & Moon:\n" + ATS.utils.getBodyText(worldInfo[timeCard]).split("\n").slice(0, 6).join("\n") + "\n"; }
-  if (calCard) { summary += "Calendar Info:\n" + ATS.utils.getBodyText(worldInfo[calCard]).split("\n").slice(0, 10).join("\n") + "\n"; }
+// Build compressed hidden summary for LLM
+function buildContextSummary(flavor = 'neutral') {
+  var c = ATS.clock;
+  var summaryLines = [];
+  summaryLines.push("### ATS_CONTEXT ###");
+  summaryLines.push("Time: " + c.year + "-" + ATS.utils.pad2(c.month) + "-" + ATS.utils.pad2(c.day) + " " + ATS.utils.pad2(c.hour) + ":" + ATS.utils.pad2(c.minute));
+  summaryLines.push("Moon: " + ATS.calendar.describeMoonPhase(c.year, c.month, c.day));
+  if (ATS.calendar.today.holidays.length) summaryLines.push("Holidays: " + ATS.calendar.today.holidays.join(","));
+  if (ATS.calendar.today.eventsToday.length) summaryLines.push("Events: " + ATS.calendar.today.eventsToday.join(","));
+  if (ATS.config.showIslamic) summaryLines.push("Islamic: " + ATS.calendar.describeIslamicLunarLine(c.year, c.month, c.day));
+  if (ATS.config.showChinese) summaryLines.push("Chinese: " + ATS.calendar.describeChineseLunisolarApprox(c.year, c.month, c.day));
+  summaryLines.push(ATS.memory.getDelta());
 
-  // Characters & Ages block
-  try {
-    var people = ATS.calendar.collectCharactersWithAge();
-    if (people && people.length) {
-      summary += "Characters & Ages:\n";
-      for (var i = 0; i < people.length; i++) {
-        var p = people[i];
-        summary += "- " + p.name + " — age " + p.age + " (DOB " + p.dobISO + ")\n";
-      }
-    }
-  } catch (_) {}
+  // Characters & Ages (compressed)
+  var people = ATS.calendar.collectCharactersWithAge();
+  if (people.length) {
+    var ages = people.map(p => p.name + ":" + p.age + "(" + p.dobISO + ")");
+    summaryLines.push("Ages: " + ages.join(";"));
+  }
 
-  return summary.trim();
+  var summary = summaryLines.join("|"); // Shorthand pipe-separated for compression
+  if (flavor !== 'neutral') summary = "[Flavor: " + flavor + "] " + summary;
+  return "ATS_STATE: " + summary;
 }
 
-/* Context modifier: inject summary for LLM only */
+/* Prune old ATS states from text */
+function pruneContext(text) {
+  // Remove lines starting with old ATS_STATE: (keep only latest)
+  var lines = text.split("\n");
+  var pruned = [];
+  var foundLatest = false;
+  for (var i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].startsWith("ATS_STATE:")) {
+      if (!foundLatest) {
+        pruned.unshift(lines[i]); // Keep the most recent
+        foundLatest = true;
+      }
+    } else {
+      pruned.unshift(lines[i]);
+    }
+  }
+  return pruned.join("\n");
+}
+
+/* Context modifier: overwrite or fallback */
 function modifier(text) {
   try {
-    var summary = buildContextSummary();
-    if (summary && text.indexOf("### SYSTEM CONTEXT ###") === -1) {
-      text = text + "\n" + summary;
+    ATS.memory.pruneOldStates(); // Prune history first
+
+    var summary = buildContextSummary(ATS.config.contextFlavor);
+
+    // Check length for fallback
+    if (text.length > ATS.config.context_max_length) {
+      // Fallback to author's note for non-essential
+      var note = state.authorsnote || "";
+      var fallbackSummary = summary.replace(/Islamic.*|Chinese.*/g, ""); // Trim alternatives
+      state.authorsnote = note + "\n" + fallbackSummary;
+      return { text: text, note: state.authorsnote }; // AI Dungeon supports note updates
+    }
+
+    // Prune old states
+    text = pruneContext(text);
+
+    // Overwrite or add ATS_CONTEXT
+    var atsMarker = "### ATS_CONTEXT ###";
+    var atsIndex = text.indexOf(atsMarker);
+    if (atsIndex !== -1) {
+      // Overwrite existing
+      var endIndex = text.indexOf("\n###", atsIndex + 1); // Assume next section
+      if (endIndex === -1) endIndex = text.length;
+      text = text.slice(0, atsIndex) + summary + text.slice(endIndex);
+    } else {
+      // Append once
+      text += "\n" + summary;
     }
   } catch (_) {}
   return { text: text };
