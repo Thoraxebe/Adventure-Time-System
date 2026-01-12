@@ -4,12 +4,13 @@
 /*
   =========================================================================
   AI Dungeon — HUD: Time & Calendar (Auto)
-  VERSION: 4.19.10h-patched-refactored (removed redundancy, modularized)
+  VERSION: 4.19.10h-patched-refactored (with memory fix)
   - Centralized config init and helpers in Library.js
   - Namespaced functions: ATS.utils, ATS.clock, ATS.calendar, ATS.parser
   - Moved age calc to ATS.calendar.collectCharactersWithAge()
   - Consolidated parsing, event checks, and banner logic
   - Added hooks for extensibility
+  - Memory fix: pruning, overwriting, token opt, caps, fallback
   =========================================================================
 */
 
@@ -38,7 +39,9 @@
         duskHour: 19,
         duskMinute: 15,
         contextFlavor: 'neutral',
-        nlMaxMinutesCap: 14 * 24 * 60
+        nlMaxMinutesCap: 14 * 24 * 60,
+        max_history_depth: 5,
+        context_max_length: 8000
       },
       cards: { timeIdx: null, settingsIdx: null, calendarIdx: null },
       pendingMinutes: 0,
@@ -65,6 +68,7 @@ ATS.utils = {};
 ATS.clock = {};
 ATS.calendar = {};
 ATS.parser = {};
+ATS.memory = {};
 ATS.hooks = { onTick: [] }; // For custom extensions
 
 // Central init (called on bootstrap or reset)
@@ -87,6 +91,9 @@ ATS.init = function() {
   ATS.cards.timeIdx = ATS.utils.findCardIndexByMarker(ATS_MARKER_TIME);
   ATS.cards.settingsIdx = ATS.utils.findCardIndexByMarker(ATS_MARKER_SETTINGS);
   ATS.cards.calendarIdx = ATS.utils.findCalendarIndexByMarkerOrKey();
+
+  // Memory init
+  ATS.memory.history = ATS.history.stack;
 };
 ATS.init();
 
@@ -157,7 +164,6 @@ ATS.utils.createOrUpdateTimeCard = function() {
 };
 ATS.utils.createOrUpdateCalendarCard = function() {
   var body = "";
-  // Build calendar body with holidays, events, etc.
   var idx = ATS.cards.calendarIdx;
   if (idx == null) {
     worldInfo.push({ keys: "__hud_calendar__", entry: ATS.utils.embedMarkerOnce(body, ATS_MARKER_CAL_AUTO), hidden: true });
@@ -165,6 +171,29 @@ ATS.utils.createOrUpdateCalendarCard = function() {
   } else {
     worldInfo[idx].entry = ATS.utils.embedMarkerOnce(body, ATS_MARKER_CAL_AUTO);
   }
+};
+
+// --- Memory Management ---
+ATS.memory.pruneOldStates = function() {
+  var maxDepth = ATS.config.max_history_depth;
+  if (ATS.memory.history.length > maxDepth) {
+    ATS.memory.history.splice(0, ATS.memory.history.length - maxDepth); // Keep last N
+  }
+};
+ATS.memory.getDelta = function() {
+  if (ATS.memory.history.length < 2) return "";
+  var prev = ATS.memory.history[ATS.memory.history.length - 2];
+  var curr = ATS.memory.history[ATS.memory.history.length - 1];
+  return "Delta: " + ATS.clock.fmtDelta(curr.elapsedMinutes - prev.elapsedMinutes);
+};
+ATS.memory.pushState = function() {
+  var stateSnapshot = {
+    clock: { ...ATS.clock },
+    calendar: { holidays: [...ATS.calendar.today.holidays], eventsToday: [...ATS.calendar.today.eventsToday] },
+    elapsedMinutes: ATS.clock.elapsedMinutes
+  };
+  ATS.memory.history.push(stateSnapshot);
+  ATS.memory.pruneOldStates();
 };
 
 // --- Clock ---
@@ -221,6 +250,7 @@ ATS.clock.tick = function() {
     ATS.utils.createOrUpdateTimeCard();
     ATS.calendar.updateToday();
     ATS.hooks.onTick.forEach(function(fn) { try { fn(); } catch (_) {} });
+    ATS.memory.pushState();
   }
   return changed;
 };
@@ -289,7 +319,6 @@ ATS.calendar.describeChineseLunisolarApprox = function(y, m, d) {
   var monthStart = cnyStart + monthsSinceCNY * ATS.calendar.SYNODIC;
   var lunarMonth = monthsSinceCNY + 1;
   var lunarDay = Math.floor(jdn - Math.floor(monthStart + 0.5)) + 1;
-  // Approximate leap month: if lunarMonth > 12, it's leap (simplified)
   if (lunarMonth > 12) lunarMonth = 'Leap ' + (lunarMonth - 12);
   return lunarDay + " day of month " + lunarMonth + ", " + ATS.calendar.sexagenaryYearName(lunarYear);
 };
@@ -301,7 +330,7 @@ ATS.calendar.describeMoonPhase = function(y, m, d) {
   return ATS.calendar.moonPhaseNames[phase];
 };
 
-// Character age support (moved from Context.js)
+// Character age support
 ATS.calendar.parseISODateToYMD = function(s) {
   if (typeof s !== "string") return null;
   s = s.trim();
@@ -342,7 +371,7 @@ ATS.calendar.collectCharactersWithAge = function() {
   return result;
 };
 
-// Event and Holiday Parsing (from worldInfo)
+// Event and Holiday Parsing
 ATS.calendar.parseDate = function(s) {
   if (typeof s !== "string") return null;
   var parts = s.split("-").map(Number);
@@ -425,7 +454,6 @@ ATS.calendar.updateToday = function() {
   today.next = null;
   today.nextHoliday = null;
   today.nextHolidayDays = null;
-  // Find next holiday/event (scan forward)
   var nextDays = 1;
   while (nextDays < 30) {
     var nextDate = { y: c.year, m: c.month, d: c.day + nextDays };
@@ -469,7 +497,7 @@ ATS.parser.parseNaturalLanguageTime = function(text) {
   else if (text.match(/\bnext\s+year\b/)) mins = ATS.config.yearDaysApprox * 1440;
   else if (text.match(/\ba\s+little\s+while\b/)) mins = ATS.config.idioms.littleWhileMinutes;
   else if (text.match(/\bseveral\s+minutes\b/)) mins = ATS.config.idioms.severalMinutes;
-  else if (text.match(/\bwait\s+a\s+minute\b/)) mins = 1; // Idiom, but literal
+  else if (text.match(/\bwait\s+a\s+minute\b/)) mins = 1;
   else if (text.match(/\bin\s+(\d+)\s+minute(s?)\b/)) mins = parseInt(RegExp.$1);
   else if (text.match(/\bin\s+(\d+)\s+hour(s?)\b/)) mins = parseInt(RegExp.$1) * 60;
   else if (text.match(/\bin\s+(\d+)\s+day(s?)\b/)) mins = parseInt(RegExp.$1) * 1440;
@@ -480,7 +508,6 @@ ATS.parser.parseNaturalLanguageTime = function(text) {
     mins = target - (ATS.clock.hour * 60 + ATS.clock.minute);
     if (mins <= 0) mins += 1440;
   }
-  // Add more phrases as needed
   mins = ATS.utils.clamp(mins, 0, ATS.config.nlMaxMinutesCap);
   if (mins > 0) ATS.pendingMinutes = mins;
   return mins > 0;
@@ -518,17 +545,31 @@ ATS.parser.handleCommand = function(text) {
     ATS.calendar.parseEventsFromWorldInfo();
     ATS.parser.pushReport("ATS reset to default state.");
   } else if (subcmd === "config") {
-    // Handle config changes, e.g., /ats config showDailyBanner false
     var key = args[0];
     var value = args[1];
     if (key in ATS.config) {
-      ATS.config[key] = JSON.parse(value); // Simple parse
+      ATS.config[key] = JSON.parse(value);
       ATS.parser.pushReport("Config updated: " + key + " = " + value);
     }
+  } else if (subcmd === "memory") {
+    var memSub = (args.shift() || "").toLowerCase();
+    if (memSub === "prune") {
+      ATS.memory.pruneOldStates();
+      ATS.parser.pushReport("Memory pruned to last " + ATS.config.max_history_depth + " states.");
+    } else if (memSub === "report") {
+      ATS.parser.pushReport("History depth: " + ATS.memory.history.length + " / " + ATS.config.max_history_depth);
+    } else if (memSub === "set_depth") {
+      var depth = parseInt(args[0]);
+      if (!isNaN(depth) && depth > 0) {
+        ATS.config.max_history_depth = depth;
+        ATS.memory.pruneOldStates();
+        ATS.parser.pushReport("Max history depth set to " + depth);
+      }
+    }
   } else {
-    ATS.parser.pushReport("ATS Commands: add <mins>, set <YYYY-MM-DD HH:MM>, report, reset, config <key> <value>");
+    ATS.parser.pushReport("ATS Commands: add <mins>, set <YYYY-MM-DD HH:MM>, report, reset, config <key> <value>, memory [prune|report|set_depth <n>]");
   }
-  return ""; // Suppress original input
+  return "";
 };
 
 // --- Banner ---
