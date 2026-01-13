@@ -338,18 +338,12 @@ function restoreClock(snap) {
   ATS.clock.elapsedMinutes = snap.elapsed;
 }
 
-// Record an advance in the history stack
 function recordAdvance(mins, source) {
   mins = Math.max(0, mins|0);
   if (!ATS.history) ATS.history = { stack: [] };
   ATS.history.stack.push({ before: snapshotClock(), applied: mins, source: String(source||'unknown') });
-  
-  // Add this to limit history (adjust MAX_HISTORY as desired, e.g., 10-50 for most use cases)
-  const MAX_HISTORY = 20;
-  while (ATS.history.stack.length > MAX_HISTORY) {
-    ATS.history.stack.shift();  // Remove oldest state
-  }
 }
+
 function undoLastAdvance() {
   var last = (ATS.history && ATS.history.stack && ATS.history.stack.length)
              ? ATS.history.stack.pop() : null;
@@ -520,7 +514,7 @@ function parseCalendarText(txt){
     return String(s || "").toLowerCase().indexOf(String(head || "").toLowerCase()) === 0;
   }
   function parseTimeSpan(tkn){
-    var dashIdx = tkn.indexOf("â€“"); if (dashIdx === -1) dashIdx = tkn.indexOf("-");
+    var dashIdx = tkn.indexOf("-"); if (dashIdx === -1) dashIdx = tkn.indexOf("-");
     var s = null, e = null;
     if (dashIdx !== -1){ s = parseHHMM(tkn.slice(0, dashIdx)); e = parseHHMM(tkn.slice(dashIdx + 1)); }
     else { s = parseHHMM(tkn); e = null; }
@@ -602,7 +596,7 @@ function parseCalendarText(txt){
     if (section === "events"){
       var parts = line.split(/\s+/);
 
-      // Range: "YYYY-MM-DD..YYYY-MM-DD [HH:MMâ€“HH:MM] Title @ Location"
+      // Range: "YYYY-MM-DD..YYYY-MM-DD [HH:MM-HH:MM] Title @ Location"
       if (parts.length >= 1 && parts[0].indexOf("..") !== -1){
         var rParts = parts[0].split("..");
         var dS = parseISODateStr(rParts[0]);
@@ -620,7 +614,7 @@ function parseCalendarText(txt){
         }
       }
 
-      // Single date (optional time): "YYYY-MM-DD [HH:MMâ€“HH:MM] Title @ Location"
+      // Single date (optional time): "YYYY-MM-DD [HH:MM-HH:MM] Title @ Location"
       if (parts.length >= 1 && parts[0].length === 10 && parts[0].charAt(4) === "-" && parts[0].charAt(7) === "-"){
         var d2 = parseISODateStr(parts[0]);
         if (d2){
@@ -645,7 +639,7 @@ function parseCalendarText(txt){
         var partsEvery = lineTrim.split(/\s+/);
         var rest = partsEvery.slice(1).join(" ").trim();
 
-        // Every day HH:MMâ€“HH:MM Title @ Location
+        // Every day HH:MM-HH:MM Title @ Location
         if (startsWithIgnoreCase(rest, "day ")){
           var t = rest.slice(4).trim();
           var s_e = t.split(/\s+/)[0];
@@ -656,7 +650,7 @@ function parseCalendarText(txt){
           continue;
         }
 
-        // Every week Weekday HH:MMâ€“HH:MM Title
+        // Every week Weekday HH:MM-HH:MM Title
         if (startsWithIgnoreCase(rest, "week ")){
           var p2 = rest.slice(5).trim().split(/\s+/);
           if (p2.length >= 2){
@@ -669,7 +663,7 @@ function parseCalendarText(txt){
           }
         }
 
-        // Every month DD HH:MMâ€“HH:MM Title
+        // Every month DD HH:MM-HH:MM Title
         if (startsWithIgnoreCase(rest, "month ")){
           var p3 = rest.slice(6).trim().split(/\s+/);
           if (p3.length >= 2){
@@ -682,7 +676,7 @@ function parseCalendarText(txt){
           }
         }
 
-        // Every year MM-DD HH:MMâ€“HH:MM Title
+        // Every year MM-DD HH:MM-HH:MM Title
         if (startsWithIgnoreCase(rest, "year ")){
           var r4 = rest.slice(5).trim();
           var p4 = r4.split(/\s+/);
@@ -726,7 +720,7 @@ function parseCalendarText(txt){
       var pH = line.split(/\s+/);
       if (pH.length >= 1){
         var timeText = pH[0];
-        var dashIdx = timeText.indexOf("â€“"); if (dashIdx === -1) dashIdx = timeText.indexOf("-");
+        var dashIdx = timeText.indexOf("-"); if (dashIdx === -1) dashIdx = timeText.indexOf("-");
         if (dashIdx !== -1){
           var open = parseHHMM(timeText.slice(0, dashIdx));
           var close = parseHHMM(timeText.slice(dashIdx + 1));
@@ -989,7 +983,7 @@ function buildCalendarAutoHeader(){
   if (cal.eventsToday && cal.eventsToday.length) {
     var first = cal.eventsToday[0];
     var s = (first.startMin!=null ? minutesToHHMM(first.startMin) : "â€”");
-    var span = (first.endMin!=null ? (s + "â€“" + minutesToHHMM(first.endMin)) : s);
+    var span = (first.endMin!=null ? (s + "-" + minutesToHHMM(first.endMin)) : s);
     var more = (cal.eventsToday.length > 1) ? (" (+" + (cal.eventsToday.length - 1) + " more)") : "";
     eventsTodayLine = "Events today: " + first.title + " (" + span + (first.location ? (" @ " + first.location) : "") + ")" + more;
   } else {
@@ -1048,7 +1042,7 @@ function updateCalendarCardForLLM(){
     "-----Events-----",
     "",
     "-----Hours-----",
-    "  09:00â€“18:00"
+    "  09:00-18:00"
   ].join("\n");
 
   var sections = ["-----Holiday-----", "-----Events-----", "-----Hours-----"];
@@ -1199,16 +1193,16 @@ function injectCalendarInstructionsAndExamplesToNotes(calIdx){
     "  - Annual (nth): Annual: 1st Sunday of July Name",
     "",
     "Events (single-day):",
-    "  - Fixed time: YYYY-MM-DD HH:MMâ€“HH:MM Title @ Location",
+    "  - Fixed time: YYYY-MM-DD HH:MM-HH:MM Title @ Location",
     "  - Start-only: YYYY-MM-DD HH:MM Title @ Location",
     "",
     "Overnight events (single-day):",
-    "  - Use HH:MMâ€“HH:MM with end < start; spans midnight.",
-    "    Example: 2071-08-26 23:00â€“02:00 Night shift @ Lab 3",
-    "    Projects 23:00â€“23:59 on start day, and 00:00â€“02:00 on next day.",
+    "  - Use HH:MM-HH:MM with end < start; spans midnight.",
+    "    Example: 2071-08-26 23:00-02:00 Night shift @ Lab 3",
+    "    Projects 23:00-23:59 on start day, and 00:00-02:00 on next day.",
     "",
     "Multi-day ranges (Option A):",
-    "  - Syntax: YYYY-MM-DD..YYYY-MM-DD [HH:MMâ€“HH:MM] Title @ Location",
+    "  - Syntax: YYYY-MM-DD..YYYY-MM-DD [HH:MM-HH:MM] Title @ Location",
     "  - Times apply to EACH day if provided; otherwise all-day.",
     "  - Range is inclusive."
   ];
@@ -1220,15 +1214,15 @@ function injectCalendarInstructionsAndExamplesToNotes(calIdx){
     "  Annual: 1st Sunday of July Family Day",
     "",
     "Events:",
-    "  2071-08-26 14:00â€“15:30 Board meeting @ Lab 3",
-    "  2071-08-26 23:00â€“02:00 Overnight maintenance @ Lab 3",
+    "  2071-08-26 14:00-15:30 Board meeting @ Lab 3",
+    "  2071-08-26 23:00-02:00 Overnight maintenance @ Lab 3",
     "  2071-08-26..2071-08-28 Conference @ HQ",
-    "  2071-09-10..2071-09-12 09:00â€“17:00 Workshop @ Training Center",
-    "  Every day 09:00â€“09:15 Standup @ Lab 3",
-    "  Every week Monday 14:00â€“15:30 Sprint Review",
-    "  Every month 15 10:00â€“11:00 Billing Run",
-    "  Every year 12-31 23:00â€“00:30 New Yearâ€™s Bash @ Plaza",
-    "  Every year 1st Sunday of July 12:00â€“16:00 Company Picnic @ Park"
+    "  2071-09-10..2071-09-12 09:00-17:00 Workshop @ Training Center",
+    "  Every day 09:00-09:15 Standup @ Lab 3",
+    "  Every week Monday 14:00-15:30 Sprint Review",
+    "  Every month 15 10:00-11:00 Billing Run",
+    "  Every year 12-31 23:00-00:30 New Yearâ€™s Bash @ Plaza",
+    "  Every year 1st Sunday of July 12:00-16:00 Company Picnic @ Park"
   ];
   ensureNotes(calIdx, NOTES_MARKER_CAL_INSTR, lines.concat([""]).concat(examples));
 }
@@ -1265,7 +1259,7 @@ function ensureCalendarCard(){
     "-----Events-----",
     "",
     "-----Hours-----",
-    "  09:00â€“18:00"
+    "  09:00-18:00"
   ].join("\n");
   var newIdx = addWorldEntry("__hud_calendar__", template);
   ATS.cards.calendarIdx = newIdx;
@@ -1611,7 +1605,7 @@ var mPass = text.match(/\b(?:(?:a|an|\d+(?:\.\d+)?|one|two|three|four|five|six|s
           try{ state._ats.pendingMinutes = 0; }catch(_){}
         }
         // structured report line
-        ATS_pushReport("âŸ¦TIMEâŸ§ SET â†’ " + mSet[1] + " " + mSet[2] + " | now " + ATS_formatClockShort());
+        ATS_pushReport("[TIME] SET -> " + mSet[1] + " " + mSet[2] + " | now " + ATS_formatClockShort());
         return text;
       }
 
@@ -1627,19 +1621,18 @@ var mPass = text.match(/\b(?:(?:a|an|\d+(?:\.\d+)?|one|two|three|four|five|six|s
         var before = snapshotClock();
         recordAdvance(mins, 'command');
 
-        // perform the advance (both global and local, guarded)
-        try{ if (typeof globalThis.tickMinutes === 'function') globalThis.tickMinutes(mins); }catch(_){}
-        try{ tickMinutes(mins); }catch(_){}
+        // perform the advance
+        tickMinutes(mins);
 
         try{ state._ats.pendingMinutes = 0; }catch(_){}
 
         // structured report line
         ATS_pushReport(
-          "âŸ¦TIMEâŸ§ ADD " + ATS_fmtDelta(mins) +
+          "[TIME] ADD " + ATS_fmtDelta(mins) +
           " | " + pad2(before.hour) + ":" + pad2(before.minute) +
-          " â†’ " + pad2(ATS.clock.hour) + ":" + pad2(ATS.clock.minute) +
+          " -> " + pad2(ATS.clock.hour) + ":" + pad2(ATS.clock.minute) +
           " | " + before.year + "-" + pad2(before.month) + "-" + pad2(before.day) +
-          " â†’ " + ATS.clock.year + "-" + pad2(ATS.clock.month) + "-" + pad2(ATS.clock.day)
+          " -> " + ATS.clock.year + "-" + pad2(ATS.clock.month) + "-" + pad2(ATS.clock.day)
         );
 
         return text;
@@ -1649,7 +1642,7 @@ var mPass = text.match(/\b(?:(?:a|an|\d+(?:\.\d+)?|one|two|three|four|five|six|s
       if (/\/time\s+undo\b/.test(low)){
         var ok = false;
         try { ok = undoLastAdvance(); } catch (_) {}
-        ATS_pushReport("âŸ¦TIMEâŸ§ UNDO " + (ok ? "âœ“" : "âœ— (no history)"));
+        ATS_pushReport("[TIME] UNDO " + (ok ? "âœ“" : "âœ— (no history)"));
         return text;
       }
 
@@ -1798,7 +1791,7 @@ globalThis.ATS_onInput = function(text){
     }
 
     if (hudIdx !== -1) {
-    ATS_pushReport("âŸ¦HUDâŸ§ banner:" + (ATS.config.showDailyBanner?"ON":"OFF") +  " holidays:" + (ATS.config.bannerShowHolidays?"ON":"OFF") + " events:" + (ATS.config.bannerShowEvents?"ON":"OFF") + " moon:" + (ATS.config.bannerShowMoon?"ON":"OFF") + " compact:" + (ATS.config.bannerCompact?"ON":"OFF") + " islamic:" + (ATS.config.showIslamic?"ON":"OFF") + " chinese:" + (ATS.config.showChinese?"ON":"OFF"));
+    ATS_pushReport("[HUD] banner:" + (ATS.config.showDailyBanner?"ON":"OFF") +  " holidays:" + (ATS.config.bannerShowHolidays?"ON":"OFF") + " events:" + (ATS.config.bannerShowEvents?"ON":"OFF") + " moon:" + (ATS.config.bannerShowMoon?"ON":"OFF") + " compact:" + (ATS.config.bannerCompact?"ON":"OFF") + " islamic:" + (ATS.config.showIslamic?"ON":"OFF") + " chinese:" + (ATS.config.showChinese?"ON":"OFF"));
   }
     var addNL = parseForTime(t);
     if ((addNL|0) > 0){
@@ -2258,4 +2251,3 @@ function ensureSettingsCard() {
     "Editing is safe. Commands are idempotent."
   ]);
 }
-
