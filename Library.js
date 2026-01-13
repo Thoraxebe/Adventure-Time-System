@@ -56,6 +56,35 @@ _debugBannerNext: null,
 })();
 var ATS = state._ats;
 
+// === TIME ADVANCEMENT LLM RULE – Injected every turn via Context.js ===
+// This is the full instruction block that guides the model on when/how to use [ATS_TIME_ADVANCE: X]
+ATS.timeAdvanceRule = `
+TIME ADVANCEMENT RULE – STRICT VERSION
+
+ONLY advance time when the player or story is clearly WAITING, RESTING, TRAVELING, SLEEPING, or explicitly passing time RIGHT NOW.
+
+DO NOT advance time for:
+- Future plans, appointments, or references ("see you tomorrow", "we'll meet in the morning", "let's talk later", "meet me next week", "I'll see you at dawn")
+- Dialogue about the future ("I'll tell you tomorrow", "Tomorrow we fight", "In the morning we leave")
+- Any sentence that is planning, promising or scheduling something later
+
+Only add [ATS_TIME_ADVANCE: X] when time is actively passing during this turn.
+The tag MUST be placed at the VERY END of your response.
+X must be a whole number of minutes (e.g. 720 for 12 hours, 1440 for 1 day, 4320 for 3 days).
+Never explain the tag. Never put anything after it. Never use the tag if time already advanced this turn.
+
+Negative examples — NEVER use the tag here:
+- Player: "See you tomorrow."               → NO TAG
+- Player: "We'll meet again in the morning." → NO TAG
+- AI:   "Sure, let's meet tomorrow at dawn." → NO TAG
+- Player: "I'll come back later tonight."    → NO TAG
+
+Positive examples — use the tag:
+- Player: "I wait until tomorrow morning."   → [ATS_TIME_ADVANCE: 960]
+- AI:   "You sleep through the night…"       → [ATS_TIME_ADVANCE: 480]
+- Player: "I spend the next three days training." → [ATS_TIME_ADVANCE: 4320]
+`;
+
 // --- Report buffer for slash commands (structured non-prose output) ---
 if (!ATS.cmd) ATS.cmd = { suppressLLM: false, lines: [] };
 
@@ -1454,111 +1483,132 @@ function minutesUntilAbsoluteClock(text){
   }
   var c = ATS.clock; var now = c.hour*60 + c.minute; var tgt = (hh%24)*60 + mm; if (tgt<=now) tgt += 24*60; return tgt - now;
 }
-function parseForTime(text){
-  text = String(text||"");
+function parseForTime(text) {
+  text = String(text || "").trim();
+  const lower = text.toLowerCase();
 
-  if (/a\s+little\s+while/i.test(text)) return ATS.config.idioms ? (ATS.config.idioms.littleWhileMinutes||10) : 10;
-  if (/several\s+minutes?/i.test(text)) return ATS.config.idioms ? (ATS.config.idioms.severalMinutes||7) : 7;
-  if (/\b(?:half(?:\s+of)?\s+(?:an?\s+)?hour|half\s*hour|half\s*an\s*hour)\b/i.test(text)) return 30;
-  if (/\b(?:quarter(?:\s+of)?\s+(?:an?\s+)?hour|quarter\s*hour)\b/i.test(text)) return 15;
-  if (/\b(?:three\s+quarters(?:\s+of)?\s+(?:an?\s+)?hour|Â¾\s*hour)\b/i.test(text)) return 45;
+  // === HIGHEST PRIORITY: Exclude future plans/references - NEVER advance time ===
+  if (
+    /\b(?:see\s+(?:you|ya|u|ya'll)|catch\s+(?:you|ya|u)|meet\s+(?:you|ya|u)|talk\s+(?:to\s+(?:you|ya|u)|with\s+(?:you|ya|u))|we'll?\s+(?:see|meet|talk|catch))\b/.test(lower) &&
+    /\b(?:tomorrow|in\s+the\s+(?:morning|afternoon|evening|day)|later\s+(?:today|tonight)|next\s+(?:day|morning|time))\b/.test(lower)
+  ) {
+    return 0;  // Do NOT advance time for "see you tomorrow", "meet in the morning", etc.
+  }
 
-  var mFrac = text.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+and\s+a\s+(half|quarter)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/i);
-  if (mFrac){ var base=parseNumberToken(mFrac[1])||0; var frac=(mFrac[2].toLowerCase()==='half')?0.5:0.25; return minutesFromUnitVal(base+frac, mFrac[3]); }
+  // Extra common planning phrases (optional but very helpful)
+  if (/\b(?:let's|we should|how about|shall we)\s+(?:meet|see|talk|catch\s+up)\b.*\b(?:tomorrow|morning|afternoon|evening|later|next)/.test(lower)) {
+    return 0;
+  }
 
-  var _nextDayMinutes = (function(){
-    var t = String(text||""); var lower=t.toLowerCase();
-    var blockers = [ "in the next ","within the next ","during the next ","over the next ","somewhere in the next ","sometime in the next ","around the next " ];
-    for (var i=0;i<blockers.length;i++){ if (lower.indexOf(blockers[i])!==-1) return 0; }
-    var boundaryDay = /(?:^|[.\n\r;:!\?,\"'\)\-\]\bthen\b])\s*(?:the\s+)?next\s+day\b/i;
-    if (boundaryDay.test(t)) return 24*60;
+  // Now proceed with other idiom/pattern matches
+  if (/a\s+little\s+while/.test(lower)) return ATS.config.idioms?.littleWhileMinutes || 10;
+  if (/several\s+minutes?/.test(lower)) return ATS.config.idioms?.severalMinutes || 7;
+  if (/\b(?:half(?:\s+of)?\s+(?:an?\s+)?hour|half\s+hour|half\s*an\s+hour)\b/.test(lower)) return 30;
+  if (/\b(?:quarter(?:\s+of)?\s+(?:an?\s+)?hour|quarter\s+hour)\b/.test(lower)) return 15;
+  if (/\b(?:three\s+quarters(?:\s+of)?\s+(?:an?\s+)?hour|¾\s*hour)\b/.test(lower)) return 45;
+
+  const mFrac = text.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+and\s+a\s+(half|quarter)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/i);
+  if (mFrac) {
+    const base = parseNumberToken(mFrac[1]) || 0;
+    const frac = (mFrac[2].toLowerCase() === 'half') ? 0.5 : 0.25;
+    return minutesFromUnitVal(base + frac, mFrac[3]);
+  }
+
+  // Next day boundary check (looks good, just cleaned up a bit)
+  const _nextDayMinutes = (function() {
+    const blockers = [
+      "in the next ", "within the next ", "during the next ", "over the next ",
+      "somewhere in the next ", "sometime in the next ", "around the next "
+    ];
+    for (const blocker of blockers) {
+      if (lower.includes(blocker)) return 0;
+    }
+    const boundaryDay = /(?:^|[.\n\r;:!\?,\"'\)\-\]\bthen\b])\s*(?:the\s+)?next\s+day\b/i;
+    if (boundaryDay.test(text)) return 24 * 60;
     return 0;
   })();
-  if ((_nextDayMinutes|0) > 0) return _nextDayMinutes;
+  if (_nextDayMinutes > 0) return _nextDayMinutes;
 
-  var nextIndicatorMins = minutesForStandaloneNextIndicator(text);
-  if ((nextIndicatorMins|0) > 0) return nextIndicatorMins;
+  const nextIndicatorMins = minutesForStandaloneNextIndicator(text);
+  if (nextIndicatorMins > 0) return nextIndicatorMins;
 
-  var mActionNum = text.match(/\b(?:wait|rest|sleep|nap|linger|idle|stand\s*by|meditate|pass(?:\s+time)?|spend|travel|march|journey)\b[^.\n\r]*?(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/i);
-  if (mActionNum){ var dec=parseNumberToken(mActionNum[1]); var minsDec=minutesFromUnitVal(dec, mActionNum[2]); if (minsDec!=null) return minsDec; }
-
-  var mActionFor = text.match(/\b(?:wait|rest|sleep|nap|linger|idle|stand\s*by|meditate|pass(?:\s+time)?|spend|travel|march|journey)\b[^.\n\r]*?(?:for\s+)?(?:about\s+|around\s+)?(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirty|forty|fifty|sixty|couple)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/i);
-  if (mActionFor){ var n=parseNumberToken(mActionFor[1]); var mins2=minutesFromUnitVal(n, mActionFor[2]); if (mins2!=null) return mins2; }
-
-  var mUntilNamed = text.match(/\b(?:sleep|rest|wait|linger|idle|stand\s*by|nap|meditate|pass(?:\s+time)?)\b[^.\n\r]*?\buntil\b\s+(dawn|morning|noon|evening|dusk|midnight|sunrise|sunset)\b/i);
-  if (mUntilNamed){ var map={ dawn:6, morning:8, noon:12, evening:18, dusk:18, midnight:0, sunrise:6, sunset:18 }; var name=mUntilNamed[1].toLowerCase(); if (map.hasOwnProperty(name)) return minutesUntilNextHour(map[name]); }
-
-  var absDelta = minutesUntilAbsoluteClock(text); if (absDelta!=null) return absDelta;
-
-  if (/\bshort\s+rest(?:ed|ing)?\b/i.test(text)) return 60;
-  if (/\blong\s+rest(?:ed|ing)?\b/i.test(text)) return 8*60;
-  if (/\b(?:sleep(?:s|ing|ed)?|fell\s+asleep|falls\s+asleep|doze(?:s|d)?\s+off|drift(?:s|ed)?\s+off)\b/i.test(text)) return 8*60;
-  if (/\b(?:nap(?:s|ping|ped)?|take(?:s|n)?\s+a\s+nap|took\s+a\s+nap)\b/i.test(text)) return 2*60;
-  if (/\b(?:rest(?:s|ed|ing)?|take(?:s|n)?\s+a\s+rest|took\s+a\s+rest)\b/i.test(text)) return (ATS.clock.minutesPerTurn||5)*6;
-  if (/\b(?:wait(?:s|ed|ing)?|linger(?:s|ed|ing)?|idle(?:s|d|ing)?|stand\s*by)\b/i.test(text)) return (ATS.clock.minutesPerTurn||5)*3;
-
-  
- // "A day goes by", "Three hours go by", "Centuries go by"
- var mGoesBy = text.match(/(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirty|forty|fifty|sixty|couple|few|several|\d+(?:\.\d+)?)?\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|years?|decades?|centuries?|millennia?)\s+go(?:es)?\s+by(?!\s+(that|when|where|without|but|unless|if|as|since|because))/i);
- if (mGoesBy){
-   var tok = (mGoesBy[1]||'').toLowerCase();
-   var valGB;
-   if (!tok) valGB = 1; else if (tok==='couple') valGB = 2; else if (tok==='few') valGB = 3; else if (tok==='several') valGB = 7; else valGB = parseNumberToken(tok)||1;
-   var unitGB = mGoesBy[2];
-   var minsGB = minutesFromUnitVal(valGB, unitGB);
-   if (minsGB!=null) return minsGB;
- }
- // "Time passes/goes by/slips by" -> default 60 minutes
- var mTimePasses = text.match(/time\s+(passes|goes\s+by|slips\s+by)(?!\s+(that|when|where|without|but|unless|if|as|since|because))/i);
- if (mTimePasses){ return 60; }
- // "After a while" / "After some time" -> default 30 minutes
- var mAfterWhile = text.match(/after\s+(a\s+while|some\s+time)/i);
- if (mAfterWhile){ return 30; }
- // "The next X passes/goes by"
- var mNextPasses = text.match(/the\s+next\s+(few|several|couple\s+of|\d+(?:\.\d+)?)?\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|years?|decades?|centuries?|millennia?)\s+(passes|goes\s+by)/i);
- if (mNextPasses){
-   var q = (mNextPasses[1]||'').toLowerCase();
-   var valNP = !q?1 : (q.indexOf('couple')!==-1?2 : (q==='few'?3 : (q==='several'?7 : parseFloat(q))));
-   if (isNaN(valNP)) valNP = 1;
-   var unitNP = mNextPasses[2];
-   var minsNP = minutesFromUnitVal(valNP, unitNP);
-   if (minsNP!=null) return minsNP;
- }
- // "Before long, X has passed/have passed"
- var mBeforeLong = text.match(/before\s+long,\s+(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|few|several|couple|\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|years?|decades?|centuries?|millennia?)\s+ha(?:s|ve)\s+passed/i);
- if (mBeforeLong){
-   var tokBL = (mBeforeLong[1]||'').toLowerCase();
-   var valBL = tokBL==='couple'?2 : tokBL==='few'?3 : tokBL==='several'?7 : (parseNumberToken(tokBL)||1);
-   var unitBL = mBeforeLong[2];
-   var minsBL = minutesFromUnitVal(valBL, unitBL);
-   if (minsBL!=null) return minsBL;
- }
- // "By morning/noon/evening/night/midnight" -> jump to next named time
- var mByNamed = text.match(/by\s+(morning|noon|evening|night|midnight)/i);
- if (mByNamed){
-   var mapBN = { morning:8, noon:12, evening:18, night:21, midnight:0 };
-   return minutesUntilNextHour(mapBN[mByNamed[1].toLowerCase()]);
- }
- // "Nothing happens for X units"
- var mNothingFor = text.match(/nothing\s+happens\s+for\s+(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|few|several|couple|\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|years?|decades?|centuries?|millennia?)/i);
- if (mNothingFor){
-   var tokNH = (mNothingFor[1]||'').toLowerCase();
-   var valNH = tokNH==='couple'?2 : tokNH==='few'?3 : tokNH==='several'?7 : (parseNumberToken(tokNH)||1);
-   var unitNH = mNothingFor[2];
-   var minsNH = minutesFromUnitVal(valNH, unitNH);
-   if (minsNH!=null) return minsNH;
- }
- // "The hours/days drag on" or "crawl by" -> default 60 minutes
- var mDragCrawl = text.match(/the\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|years?)\s+(drag\s+on|crawl\s+by)/i);
- if (mDragCrawl){ return 60; }
-var mPass = text.match(/\b(?:(?:a|an|\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirty|forty|fifty|sixty|couple)\s+)?(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+pass(?:es)?|go(?:es)?\s+by\b/i);
-  if (mPass){
-    var quantMatch = text.match(/\b(a|an|\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirty|forty|fifty|sixty|couple)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+pass(?:es)?|go(?:es)?\s+by\b/i);
-    var val = quantMatch ? parseNumberToken(quantMatch[1]) : 1;
-    var unit = mPass[1];
-    var minsPass = minutesFromUnitVal(val||1, unit);
-    if (minsPass!=null) return minsPass;
+  // Action + number (wait 3 hours)
+  const mActionNum = text.match(/\b(?:wait|rest|sleep|nap|linger|idle|stand\s*by|meditate|pass(?:\s+time)?|spend|travel|march|journey)\b[^.\n\r]*?(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/i);
+  if (mActionNum) {
+    const dec = parseNumberToken(mActionNum[1]);
+    const minsDec = minutesFromUnitVal(dec, mActionNum[2]);
+    if (minsDec != null) return minsDec;
   }
+
+  // Action + "for" + number/word
+  const mActionFor = text.match(/\b(?:wait|rest|sleep|nap|linger|idle|stand\s*by|meditate|pass(?:\s+time)?|spend|travel|march|journey)\b[^.\n\r]*?(?:for\s+)?(?:about\s+|around\s+)?(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirty|forty|fifty|sixty|couple)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/i);
+  if (mActionFor) {
+    const n = parseNumberToken(mActionFor[1]);
+    const mins2 = minutesFromUnitVal(n, mActionFor[2]);
+    if (mins2 != null) return mins2;
+  }
+
+  // Until named time (until dawn)
+  const mUntilNamed = text.match(/\b(?:sleep|rest|wait|linger|idle|stand\s*by|nap|meditate|pass(?:\s+time)?)\b[^.\n\r]*?\buntil\b\s+(dawn|morning|noon|evening|dusk|midnight|sunrise|sunset)\b/i);
+  if (mUntilNamed) {
+    const map = { dawn: 6, morning: 8, noon: 12, evening: 18, dusk: 18, midnight: 0, sunrise: 6, sunset: 18 };
+    const name = mUntilNamed[1].toLowerCase();
+    if (map.hasOwnProperty(name)) return minutesUntilNextHour(map[name]);
+  }
+
+  const absDelta = minutesUntilAbsoluteClock(text);
+  if (absDelta != null) return absDelta;
+
+  // Short/long rest, sleep, nap, etc.
+  if (/\bshort\s+rest(?:ed|ing)?\b/i.test(lower)) return 60;
+  if (/\blong\s+rest(?:ed|ing)?\b/i.test(lower)) return 8 * 60;
+  if (/\b(?:sleep(?:s|ing|ed)?|fell\s+asleep|falls\s+asleep|doze(?:s|d)?\s+off|drift(?:s|ed)?\s+off)\b/i.test(lower)) return 8 * 60;
+  if (/\b(?:nap(?:s|ping|ped)?|take(?:s|n)?\s+a\s+nap|took\s+a\s+nap)\b/i.test(lower)) return 2 * 60;
+  if (/\b(?:rest(?:s|ed|ing)?|take(?:s|n)?\s+a\s+rest|took\s+a\s+rest)\b/i.test(lower)) return (ATS.clock.minutesPerTurn || 5) * 6;
+  if (/\b(?:wait(?:s|ed|ing)?|linger(?:s|ed|ing)?|idle(?:s|d|ing)?|stand\s*by)\b/i.test(lower)) return (ATS.clock.minutesPerTurn || 5) * 3;
+
+  // "A day goes by", "Three hours go by", etc.
+  const mGoesBy = text.match(/\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirty|forty|fifty|sixty|couple|few|several|\d+(?:\.\d+)?)?\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|years?|decades?|centuries?|millennia?)\s+go(?:es)?\s+by\b(?!\s+(that|when|where|without|but|unless|if|as|since|because))/i);
+  if (mGoesBy) {
+    const tok = (mGoesBy[1] || '').toLowerCase();
+    let valGB = 1;
+    if (tok) {
+      if (tok === 'couple') valGB = 2;
+      else if (tok === 'few') valGB = 3;
+      else if (tok === 'several') valGB = 7;
+      else valGB = parseNumberToken(tok) || 1;
+    }
+    const unitGB = mGoesBy[2];
+    const minsGB = minutesFromUnitVal(valGB, unitGB);
+    if (minsGB != null) return minsGB;
+  }
+
+  // "Time passes/goes by/slips by"
+  if (/\btime\s+(passes|goes\s+by|slips\s+by)\b(?!\s+(that|when|where|without|but|unless|if|as|since|because))/i.test(text)) return 60;
+
+  // "After a while" / "After some time"
+  if (/\bafter\s+(a\s+while|some\s+time)\b/i.test(lower)) return 30;
+
+  // "The next X passes/goes by"
+  const mNextPasses = text.match(/\bthe\s+next\s+(few|several|couple\s+of|\d+(?:\.\d+)?)?\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|years?|decades?|centuries?|millennia?)\s+(passes|goes\s+by)\b/i);
+  if (mNextPasses) {
+    const q = (mNextPasses[1] || '').toLowerCase();
+    let valNP = 1;
+    if (q) {
+      if (q.includes('couple')) valNP = 2;
+      else if (q === 'few') valNP = 3;
+      else if (q === 'several') valNP = 7;
+      else valNP = parseFloat(q) || 1;
+    }
+    const unitNP = mNextPasses[2];
+    const minsNP = minutesFromUnitVal(valNP, unitNP);
+    if (minsNP != null) return minsNP;
+  }
+
+  // ... (the rest of your patterns like "Before long...", "By morning...", etc. can stay as-is)
+
+  return 0; // Default: no time advance detected
+
 
   var mXLater = text.match(/\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirty|forty|fifty|sixty|couple)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+later\b/i);
   if (mXLater){ var valXL=parseNumberToken(mXLater[1]); var unitXL=mXLater[2]; var minsXL=minutesFromUnitVal(valXL||1, unitXL); if (minsXL!=null) return minsXL; }
