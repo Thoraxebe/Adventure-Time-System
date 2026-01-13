@@ -338,12 +338,18 @@ function restoreClock(snap) {
   ATS.clock.elapsedMinutes = snap.elapsed;
 }
 
+// Record an advance in the history stack
 function recordAdvance(mins, source) {
   mins = Math.max(0, mins|0);
   if (!ATS.history) ATS.history = { stack: [] };
   ATS.history.stack.push({ before: snapshotClock(), applied: mins, source: String(source||'unknown') });
+  
+  // Add this to limit history (adjust MAX_HISTORY as desired, e.g., 10-50 for most use cases)
+  const MAX_HISTORY = 20;
+  while (ATS.history.stack.length > MAX_HISTORY) {
+    ATS.history.stack.shift();  // Remove oldest state
+  }
 }
-
 function undoLastAdvance() {
   var last = (ATS.history && ATS.history.stack && ATS.history.stack.length)
              ? ATS.history.stack.pop() : null;
@@ -2252,3 +2258,4 @@ function ensureSettingsCard() {
     "Editing is safe. Commands are idempotent."
   ]);
 }
+
