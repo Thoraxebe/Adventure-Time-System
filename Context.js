@@ -7,11 +7,11 @@
   if(!state||!state._ats)return;
   if(!state._ats.config)state._ats.config={};
   var cfg=state._ats.config;
-  if(cfg.dawnHour==null)cfg.dawnHour=5;
-  if(cfg.dawnMinute==null)cfg.dawnMinute=30;
-  if(cfg.duskHour==null)cfg.duskHour=19;
-  if(cfg.duskMinute==null)cfg.duskMinute=15;
-  if(cfg.contextFlavor==null)cfg.contextFlavor='neutral';
+  if(cfg.dawnHour==null) cfg.dawnHour=5;
+  if(cfg.dawnMinute==null) cfg.dawnMinute=30;
+  if(cfg.duskHour==null) cfg.duskHour=19;
+  if(cfg.duskMinute==null) cfg.duskMinute=15;
+  if(cfg.contextFlavor==null) cfg.contextFlavor='neutral';
 }catch(_){}})();
 
 /* Build hidden summary for LLM */
@@ -33,12 +33,18 @@ function _computeAgeOnDate(dobY, dobM, dobD, curY, curM, curD) {
   if (curM < dobM || (curM === dobM && curD < dobD)) age -= 1;
   return age < 0 ? 0 : age;
 }
-function _collectCharactersWithAge() {
+function _collectCharactersWithAge(currentContext) {  // Added currentContext param
   var result = [];
   try {
     if (!Array.isArray(worldInfo)) return result;
-    for (var i = 0; i < worldInfo.length; i++) {
+    const MAX_ENTRIES = 50;  // Safety limit
+    for (var i = 0; i < Math.min(worldInfo.length, MAX_ENTRIES); i++) {
       var wi = worldInfo[i]; if (!wi) continue;
+      
+      // NEW: Filter for "loaded" entries – check if keys appear in current context
+      var keys = String(wi.keys || "").toLowerCase().trim();
+      if (keys && !currentContext.toLowerCase().includes(keys)) continue;  // Skip if not loaded/matched
+      
       var body = String((wi.value!=null?wi.value:(wi.entry!=null?wi.entry:(wi.text!=null?wi.text:""))));
       var notes = String(wi.notes || wi.description || wi.desc || "");
       var scan = body + "\n" + notes;
@@ -58,7 +64,7 @@ function _collectCharactersWithAge() {
 }
 // --- END: Characters age support ---
 
-function buildContextSummary(){
+function buildContextSummary(text) {  // Added text param to pass context
   var timeCard = (typeof findCardByMarker === 'function')
     ? findCardByMarker("[[ATS:TIME]]")
     : "";
@@ -72,7 +78,7 @@ function buildContextSummary(){
 
 // --- Characters & Ages block (LLM-only) ---
 try {
-  var people = _collectCharactersWithAge();
+  var people = _collectCharactersWithAge(text);  // Pass current text for filter
   if (people && people.length) {
     summary += "Characters & Ages:\n";
     for (var i = 0; i < people.length; i++) {
@@ -90,9 +96,9 @@ try {
 /* Context modifier: inject summary for LLM only */
 function modifier(text){
   try{
-    var summary=buildContextSummary();
+    var summary=buildContextSummary(text);  // Pass text to build function
     if(summary && text.indexOf("### SYSTEM CONTEXT ###")===-1){
-text=text+"\n"+summary;
+      text=text+"\n"+summary;
     }
   }catch(_){}
   return { text:text };
