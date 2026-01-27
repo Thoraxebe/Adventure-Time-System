@@ -56,35 +56,6 @@ _debugBannerNext: null,
 })();
 var ATS = state._ats;
 
-// === TIME ADVANCEMENT LLM RULE – Injected every turn via Context.js ===
-// This is the full instruction block that guides the model on when/how to use [ATS_TIME_ADVANCE: X]
-ATS.timeAdvanceRule = `
-TIME ADVANCEMENT RULE – STRICT VERSION
-
-ONLY advance time when the player or story is clearly WAITING, RESTING, TRAVELING, SLEEPING, or explicitly passing time RIGHT NOW.
-
-DO NOT advance time for:
-- Future plans, appointments, or references ("see you tomorrow", "we'll meet in the morning", "let's talk later", "meet me next week", "I'll see you at dawn")
-- Dialogue about the future ("I'll tell you tomorrow", "Tomorrow we fight", "In the morning we leave")
-- Any sentence that is planning, promising or scheduling something later
-
-Only add [ATS_TIME_ADVANCE: X] when time is actively passing during this turn.
-The tag MUST be placed at the VERY END of your response.
-X must be a whole number of minutes (e.g. 720 for 12 hours, 1440 for 1 day, 4320 for 3 days).
-Never explain the tag. Never put anything after it. Never use the tag if time already advanced this turn.
-
-Negative examples — NEVER use the tag here:
-- Player: "See you tomorrow."               → NO TAG
-- Player: "We'll meet again in the morning." → NO TAG
-- AI:   "Sure, let's meet tomorrow at dawn." → NO TAG
-- Player: "I'll come back later tonight."    → NO TAG
-
-Positive examples — use the tag:
-- Player: "I wait until tomorrow morning."   → [ATS_TIME_ADVANCE: 960]
-- AI:   "You sleep through the night…"       → [ATS_TIME_ADVANCE: 480]
-- Player: "I spend the next three days training." → [ATS_TIME_ADVANCE: 4320]
-`;
-
 // --- Report buffer for slash commands (structured non-prose output) ---
 if (!ATS.cmd) ATS.cmd = { suppressLLM: false, lines: [] };
 
@@ -709,8 +680,6 @@ function containsCalendarMarkers(s){
 
 
 
-
-
 function parseCalendarText(txt){
   var lines = String(txt || "").split(/\r?\n/);
   var holidays = [], events = [], hours = null;
@@ -756,7 +725,6 @@ function parseCalendarText(txt){
     var map = WEEKDAY_MAP_GET && WEEKDAY_MAP_GET();
     var idx = map ? map[key] : null;
     if (idx == null){
-      // Fallbacks for short/variant forms
       var fb = { sun:0, mon:1, tue:2, tues:2, wed:3, weds:3, thu:4, thur:4, thurs:4, fri:5, sat:6 };
       idx = fb[key];
     }
@@ -782,78 +750,58 @@ function parseCalendarText(txt){
   function engineIndexFromJsIndex(jsIdx) {
     if (jsIdx == null) return null;
     var c = ATS.clock;
-    // JS: 0=Sun..6=Sat
-    var jsToday  = new Date(c.year, c.month - 1, c.day).getDay();
-    // Engine's notion of "today"
-    var engToday = weekdayIndex(c.year, c.month, c.day); // 0..6 (engine scheme)
-    // Normalize to [0..6]
-    var offset = ((engToday - jsToday) % 7 + 7) % 7;
+    var jsToday  = new Date(c.year, c.month - 1, c.day).getDay(); // JS: 0..6 (Sun..Sat)
+    var engToday = weekdayIndex(c.year, c.month, c.day);           // Engine's 0..6
+    var offset = ((engToday - jsToday) % 7 + 7) % 7;               // normalize [-6..+6] -> [0..6]
     return (jsIdx + offset) % 7;
   }
-  // Convenience: weekday token -> engine index
   function engineIndexFromToken(tok) {
     var jsIdx = jsIndexFromToken(tok);
     return engineIndexFromJsIndex(jsIdx);
   }
-  // Return engine-index array for a category ("weekday", "weekend", "weekend day")
   function engineIndicesForCategory(cat){
     var c = String(cat || "").toLowerCase().trim();
-    function ei(jsIdx){ return engineIndexFromJsIndex(jsIdx); } // translate each JS index to engine
+    function ei(jsIdx){ return engineIndexFromJsIndex(jsIdx); }
     if (c === "weekday" || c === "weekdays") {
-      // Mon..Fri
-      return [ei(1), ei(2), ei(3), ei(4), ei(5)].filter(function(x){return x!=null;});
+      return [ei(1), ei(2), ei(3), ei(4), ei(5)].filter(function(x){return x!=null;}); // Mon..Fri
     }
     if (c === "weekend" || c === "weekend day" || c === "weekend days") {
-      // Sat, Sun
-      return [ei(6), ei(0)].filter(function(x){return x!=null;});
+      return [ei(6), ei(0)].filter(function(x){return x!=null;}); // Sat, Sun
     }
     return [];
   }
-  // Parse a weekday set like "Mon,Wed,Fri" or "Mon-Fri" (supports en/em dashes)
-  // Returns an array of ENGINE weekday indices (0..6 in your engine's scheme)
+  // Parse "Mon,Wed,Fri" or "Mon-Fri" (supports en/em dashes) -> ENGINE indices[]
   function parseWeekdaySetToEngineIndices(setStr){
     if (!setStr) return [];
     var s = normUnicodeSpacesAndDashes(setStr).toLowerCase().replace(/\s+/g, ' ').trim();
 
-    // Quick category shortcuts:
-    if (/^weekdays?$/.test(s))       return [1,2,3,4,5].map(engineIndexFromJsIndex); // Mon..Fri
-    if (/^weekend(?:\s*day|\s*days)?$/.test(s)) return [6,0].map(engineIndexFromJsIndex); // Sat, Sun
+    // Category shortcuts:
+    if (/^weekdays?$/.test(s))                 return [1,2,3,4,5].map(engineIndexFromJsIndex); // Mon..Fri
+    if (/^weekend(?:\s*day|\s*days)?$/.test(s)) return [6,0].map(engineIndexFromJsIndex);      // Sat, Sun
 
     var jsSet = Object.create(null);
-    function addJs(idx){ if (idx != null) jsSet[idx] = true; }
-    function expandRange(jsStart, jsEnd){
-      if (jsStart == null || jsEnd == null) return;
-      var i = jsStart; addJs(i);
-      while (i !== jsEnd){
-        i = (i + 1) % 7;
-        addJs(i);
-        if (i === jsStart) break; // safety
-      }
+    function addJs(i){ if (i!=null) jsSet[i] = true; }
+    function expandRange(a,b){
+      if (a==null || b==null) return;
+      var i=a; addJs(i);
+      while(i!==b){ i=(i+1)%7; addJs(i); if(i===a)break; }  // support wrap-around (Fri-Mon)
     }
 
-    var parts = s.split(/\s*,\s*/);  // e.g., "mon-wed, fri"
-    for (var p = 0; p < parts.length; p++){
-      var tok = parts[p];
-      if (!tok) continue;
-
+    s.split(/\s*,\s*/).forEach(function(tok){
+      if (!tok) return;
       if (tok.indexOf('-') !== -1){
-        var ab = tok.split('-');
-        var a = (ab[0] || '').trim();
-        var b = (ab[1] || '').trim();
-        var aIdx = jsIndexFromToken(a);
-        var bIdx = jsIndexFromToken(b);
-        expandRange(aIdx, bIdx); // supports wrap-around (Fri-Mon)
+        var ab = tok.split('-'), a=ab[0].trim(), b=ab[1].trim();
+        expandRange(jsIndexFromToken(a), jsIndexFromToken(b));
       } else {
-        var dIdx = jsIndexFromToken(tok);
-        addJs(dIdx);
+        addJs(jsIndexFromToken(tok));
       }
-    }
+    });
 
-    var out = [];
+    var out=[];
     for (var k in jsSet){
       if (!jsSet.hasOwnProperty(k)) continue;
       var eng = engineIndexFromJsIndex(parseInt(k,10));
-      if (eng != null) out.push(eng);
+      if (eng!=null) out.push(eng);
     }
     out.sort(function(a,b){ return a - b; });
     return out;
@@ -861,7 +809,6 @@ function parseCalendarText(txt){
 
   // ---------- Main Parse ----------
   for (var i = 0; i < lines.length; i++){
-    // Normalize the raw input line first
     var raw = normUnicodeSpacesAndDashes(lines[i]);
     var line = raw.trim();
     if (!line) continue;
@@ -889,7 +836,7 @@ function parseCalendarText(txt){
           continue;
         }
       }
-      // Annual: numeric or name-based, or Nth weekday of month
+      // Annual: numeric/name-based, or Nth weekday of month
       if (startsWithIgnoreCase(line, "Annual:")){
         var restH = line.slice(7).trim();
         var sp2 = restH.split(/\s+/);
@@ -934,7 +881,7 @@ function parseCalendarText(txt){
     if (section === "events"){
       var parts = line.split(/\s+/);
 
-      // Range: "YYYY-MM-DD..YYYY-MM-DD [HH:MM-HH:MM] Title @ Location"
+      // Date range: "YYYY-MM-DD..YYYY-MM-DD [HH:MM-HH:MM] Title @ Location"
       if (parts.length >= 1 && parts[0].indexOf("..") !== -1){
         var rParts = parts[0].split("..");
         var dS = parseISODateStr(rParts[0]);
@@ -952,7 +899,7 @@ function parseCalendarText(txt){
         }
       }
 
-      // Single date (optional time): "YYYY-MM-DD [HH:MM-HH:MM] Title @ Location"
+      // Single date: "YYYY-MM-DD [HH:MM-HH:MM] Title @ Location"
       if (parts.length >= 1 && parts[0].length === 10 && parts[0].charAt(4) === "-" && parts[0].charAt(7) === "-"){
         var d2 = parseISODateStr(parts[0]);
         if (d2){
@@ -973,13 +920,11 @@ function parseCalendarText(txt){
       // Recurring: "Every ..."
       var lineTrim = line.trim();
       if (startsWithIgnoreCase(lineTrim, "Every ")){
-        // Guard the whole "Every ..." block so a bad line can't halt the HUD
         try {
-          // define parts from trimmed text first
           var partsEvery = lineTrim.split(/\s+/);
           var rest = partsEvery.slice(1).join(" ").trim();
 
-          // === CATEGORY: "Every weekday HH:MM[-HH:MM] Title @ Location"
+          // CATEGORY: Every weekday …
           (function(){
             var handled = false;
             if (startsWithIgnoreCase(rest, "weekday ")) {
@@ -989,20 +934,15 @@ function parseCalendarText(txt){
               var info    = parseEventLocation(tkn.slice(timeTok.length).trim());
               var set     = engineIndicesForCategory("weekday");
               if (set.length) {
-                recEvents.push({
-                  freq: "WEEKLY",
-                  weekdays: set,                 // Mon..Fri
-                  weekdayToken: "weekday",
-                  startMin: se.s, endMin: se.e,
-                  title: info.title, location: info.location
-                });
+                recEvents.push({ freq:"WEEKLY", weekdays:set, weekdayToken:"weekday",
+                  startMin:se.s, endMin:se.e, title:info.title, location:info.location });
                 handled = true;
               }
             }
             if (handled) { throw {__handled:true}; }
           })();
 
-          // === CATEGORY: "Every weekend day HH:MM[-HH:MM] Title @ Location"
+          // CATEGORY: Every weekend day …
           (function(){
             var handled = false;
             if (startsWithIgnoreCase(rest, "weekend day ")) {
@@ -1012,20 +952,15 @@ function parseCalendarText(txt){
               var info    = parseEventLocation(tkn.slice(timeTok.length).trim());
               var set     = engineIndicesForCategory("weekend day");
               if (set.length) {
-                recEvents.push({
-                  freq: "WEEKLY",
-                  weekdays: set,                 // Sat/Sun
-                  weekdayToken: "weekend day",
-                  startMin: se.s, endMin: se.e,
-                  title: info.title, location: info.location
-                });
+                recEvents.push({ freq:"WEEKLY", weekdays:set, weekdayToken:"weekend day",
+                  startMin:se.s, endMin:se.e, title:info.title, location:info.location });
                 handled = true;
               }
             }
             if (handled) { throw {__handled:true}; }
           })();
 
-          // === CATEGORY: "Every weekend HH:MM[-HH:MM] Title @ Location"
+          // CATEGORY: Every weekend …
           (function(){
             var handled = false;
             if (startsWithIgnoreCase(rest, "weekend ")) {
@@ -1035,54 +970,36 @@ function parseCalendarText(txt){
               var info    = parseEventLocation(tkn.slice(timeTok.length).trim());
               var set     = engineIndicesForCategory("weekend");
               if (set.length) {
-                recEvents.push({
-                  freq: "WEEKLY",
-                  weekdays: set,                 // Sat/Sun
-                  weekdayToken: "weekend",
-                  startMin: se.s, endMin: se.e,
-                  title: info.title, location: info.location
-                });
+                recEvents.push({ freq:"WEEKLY", weekdays:set, weekdayToken:"weekend",
+                  startMin:se.s, endMin:se.e, title:info.title, location:info.location });
                 handled = true;
               }
             }
             if (handled) { throw {__handled:true}; }
           })();
 
-          // === LIST/RANGE: "Every <weekday-list-or-range> [at ]HH:MM[-HH:MM] Title"
-          // Examples: "Every Mon,Wed,Fri 09:00-10:00 ...", "Every Mon-Fri 09:00-17:00 ...",
-          //           "Every Tue–Thu 10:00-12:00 ...", "Every Friday-Monday 18:00-20:00 ..."
+          // LIST/RANGE: Every Mon,Wed,Fri … | Every Mon-Fri … | Every Tue–Thu …
           (function(){
-            var handled = false;
-
+            var handled=false;
             var restNorm = normUnicodeSpacesAndDashes(rest).replace(/\s+/g, " ").trim();
             var m = restNorm.match(/^([A-Za-z ,\-\u2012\u2013\u2014\u2015]+?)\s+(?:at\s+)?(\d{1,2}:\d{2})(?:\s*-\s*(\d{1,2}:\d{2}))?\s+(.+)$/i);
             if (m) {
               var setStr   = (m[1] || "").trim();
               var engDays  = parseWeekdaySetToEngineIndices(setStr);
               if (engDays && engDays.length){
-                var startTok = m[2];
-                var endTok   = m[3] || null;
+                var startTok = m[2], endTok = m[3] || null;
                 var spanTok  = endTok ? (startTok + '-' + endTok) : startTok;
-
                 var seAlt    = parseTimeSpan(spanTok);
                 var infoAlt  = parseEventLocation((m[4] || "").trim());
-
-                recEvents.push({
-                  freq: "WEEKLY",
-                  weekdays: engDays,                 // set-based weekly
-                  weekdayToken: setStr,              // keep original text (debug)
-                  startMin: seAlt.s,
-                  endMin:   seAlt.e,
-                  title: infoAlt.title,
-                  location: infoAlt.location
-                });
-                handled = true;
+                recEvents.push({ freq:"WEEKLY", weekdays:engDays, weekdayToken:setStr,
+                  startMin: seAlt.s, endMin: seAlt.e, title: infoAlt.title, location: infoAlt.location });
+                handled=true;
               }
             }
-            if (handled) { throw {__handled:true}; }
+            if (handled){ throw {__handled:true}; }
           })();
 
-          // Every day HH:MM-HH:MM Title @ Location
+          // Every day …
           if (startsWithIgnoreCase(rest, "day ")){
             var t = rest.slice(4).trim();
             var s_e = t.split(/\s+/)[0];
@@ -1093,58 +1010,41 @@ function parseCalendarText(txt){
             continue;
           }
 
-          // Every week Weekday HH:MM-HH:MM Title
+          // Every week Weekday …
           if (startsWithIgnoreCase(rest, "week ")){
             var p2 = rest.slice(5).trim().split(/\s+/);
             if (p2.length >= 2){
-              var wdW = engineIndexFromToken(p2[0]);   // robust to engine offset
+              var wdW = engineIndexFromToken(p2[0]);
               var seWk = parseTimeSpan(p2[1]);
               var titleWk = rest.slice(5 + p2[0].length + 1 + p2[1].length).trim();
               var infoWk = parseEventLocation(titleWk);
-              if (wdW != null) recEvents.push({
-                freq:"WEEKLY",
-                weekday: wdW,
-                weekdayToken: String(p2[0]),
-                startMin: seWk.s, endMin: seWk.e,
-                title: infoWk.title, location: infoWk.location
-              });
+              if (wdW != null) recEvents.push({ freq:"WEEKLY", weekday: wdW, weekdayToken: String(p2[0]),
+                startMin: seWk.s, endMin: seWk.e, title: infoWk.title, location: infoWk.location });
               continue;
             }
           }
 
-          // "Every <weekday> [at ]HH:MM[-HH:MM] Title @ Location"  (continue-free)
+          // Every <weekday> [at ]HH:MM[-HH:MM] …
           (function(){
             var handled = false;
-
             var restNorm2 = normUnicodeSpacesAndDashes(rest).replace(/\s+/g, " ").trim();
             var m2 = restNorm2.match(/^([A-Za-z]+s?)\s+(?:at\s+)?(\d{1,2}:\d{2})(?:\s*-\s*(\d{1,2}:\d{2}))?\s+(.+)$/i);
             if (m2) {
-              var wdIdx = engineIndexFromToken(m2[1]); // engine-consistent index
+              var wdIdx = engineIndexFromToken(m2[1]);
               if (wdIdx != null) {
-                var startTok = m2[2];
-                var endTok   = m2[3] || null;
+                var startTok = m2[2], endTok = m2[3] || null;
                 var spanTok  = endTok ? (startTok + '-' + endTok) : startTok;
-
                 var seAlt    = parseTimeSpan(spanTok);
                 var infoAlt  = parseEventLocation(m2[4].trim());
-
-                recEvents.push({
-                  freq: "WEEKLY",
-                  weekday: wdIdx,
-                  weekdayToken: String(m2[1]),
-                  startMin: seAlt.s,
-                  endMin:   seAlt.e,
-                  title: infoAlt.title,
-                  location: infoAlt.location
-                });
+                recEvents.push({ freq: "WEEKLY", weekday: wdIdx, weekdayToken: String(m2[1]),
+                  startMin: seAlt.s, endMin: seAlt.e, title: infoAlt.title, location: infoAlt.location });
                 handled = true;
               }
             }
-
             if (handled) { throw {__handled:true}; }
           })();
 
-          // Every month DD HH:MM-HH:MM Title
+          // Every month …
           if (startsWithIgnoreCase(rest, "month ")){
             var p3 = rest.slice(6).trim().split(/\s+/);
             if (p3.length >= 2){
@@ -1152,12 +1052,13 @@ function parseCalendarText(txt){
               var seM = parseTimeSpan(p3[1]);
               var titleM = rest.slice(6 + p3[0].length + 1 + p3[1].length).trim();
               var infoM = parseEventLocation(titleM);
-              if (!isNaN(dom) && dom >= 1 && dom <= 31) recEvents.push({ freq:"MONTHLY", monthDay: dom, startMin: seM.s, endMin: seM.e, title: infoM.title, location: infoM.location });
+              if (!isNaN(dom) && dom >= 1 && dom <= 31) recEvents.push({ freq:"MONTHLY", monthDay: dom,
+                startMin: seM.s, endMin: seM.e, title: infoM.title, location: infoM.location });
               continue;
             }
           }
 
-          // Every year MM-DD HH:MM-HH:MM Title  OR  "Every year <nth> <weekday> of <Month> HH:MM-HH:MM Title"
+          // Every year …
           if (startsWithIgnoreCase(rest, "year ")){
             var r4 = rest.slice(5).trim();
             var p4 = r4.split(/\s+/);
@@ -1185,7 +1086,8 @@ function parseCalendarText(txt){
                   var title5 = right.slice(rightParts[0].length + 1 + rightParts[1].length).trim();
                   var info5 = parseEventLocation(title5);
                   if (nth != null && wd2 != null && mon != null){
-                    recEvents.push({ freq:"YEARLY_NTH", nth:nth, weekday:wd2, month:mon, startMin:se5.s, endMin:se5.e, title:info5.title, location:info5.location });
+                    recEvents.push({ freq:"YEARLY_NTH", nth:nth, weekday:wd2, month:mon,
+                      startMin:se5.s, endMin:se5.e, title:info5.title, location:info5.location });
                   }
                   continue;
                 }
@@ -1193,7 +1095,6 @@ function parseCalendarText(txt){
             }
           }
         } catch(e) {
-          // If our sentinel was thrown, it means a case handled the line; skip error logging
           if (!(e && e.__handled)) {
             ATS.calendar._errors.push({ line: lineTrim, error: String(e && e.message || e) });
           }
@@ -1281,13 +1182,14 @@ function nextAnnualNthWeekday(currentISO, month, weekday, nth){
 /* Cross-reference calendar for today (holidays, events, next/ongoing) */
 
 
+
 function crossRefCalendarForToday(){
   var c = ATS.clock, todayISO = toISODate(c.year, c.month, c.day), todayDate = isoToDate(todayISO);
 
-  // --- helpers to normalize tokens and invert maps (local to this function) ---
+  // token helpers
   function normalizeWeekdayToken(tok){
     if (!tok) return null;
-    var key = String(tok).toLowerCase().replace(/s$/, ""); // remove trailing 's'
+    var key = String(tok).toLowerCase().replace(/s$/, "");
     if (key === "tues") key = "tue";
     if (key === "weds") key = "wed";
     if (key === "thur" || key === "thurs" || key === "thursday") key = "thu";
@@ -1305,7 +1207,7 @@ function crossRefCalendarForToday(){
     return (idx >= 0 && idx < arr.length) ? arr[idx] : null;
   }
 
-  // --- holidays (unchanged) ---
+  // holidays (unchanged)
   var todayFixed = (ATS.calendar.holidays||[]).filter(function(h){ return String(h.date||"").trim()===todayISO; })
                    .map(function(h){ return { iso:h.date, name:h.name }; });
 
@@ -1328,7 +1230,7 @@ function crossRefCalendarForToday(){
   }
   var todayNames = todayFixed.concat(todayRec).map(function(x){ return String(x.name||"").trim(); }).filter(Boolean);
 
-  // --- next holiday candidate logic (unchanged) ---
+  // next holiday candidate logic (unchanged)
   var candidates = [];
   function pushCandidate(iso, name, source){
     name = String(name||"").replace(/\u00A0/g,"").replace(/\u200B/g,"").trim();
@@ -1372,7 +1274,7 @@ function crossRefCalendarForToday(){
     daysUntil = Math.round((nextHoliday.ts - todayDate.getTime()) / (1000*60*60*24));
   }
 
-  // --- events today (fixed & ranges unchanged) ---
+  // events today (fixed & ranges unchanged)
   var todayEvents = [];
   var evs = ATS.calendar.events||[];
   var prevISO = isoMinusOneDay(todayISO);
@@ -1400,10 +1302,9 @@ function crossRefCalendarForToday(){
     }
   }
 
-  // --- weekly/daily/monthly/yearly include check (WEEKLY enhanced) ---
-  var wdToday = weekdayIndex(c.year, c.month, c.day); // numeric "today"
+  // weekly include (supports single numbers, tokens, and weekday arrays)
+  var wdToday = weekdayIndex(c.year, c.month, c.day);
 
-  // Derive a canonical token for "today"
   var todayToken = null;
   try {
     var _m = WEEKDAY_MAP_GET && WEEKDAY_MAP_GET(); // e.g., {mon:1, tue:2, ...}
@@ -1422,22 +1323,19 @@ function crossRefCalendarForToday(){
       include = true;
     }
     else if (evR.freq === "WEEKLY"){
-      // 1) number-based match (single weekday number)
+      // single-number weekday
       var numberMatch = (typeof evR.weekday === "number" && evR.weekday === wdToday);
-
-      // 2) string-based single weekday (e.g., "thu")
+      // single token weekday (e.g., "thu")
       var singleTokenMatch = (typeof evR.weekday === "string" &&
                               todayToken &&
                               normalizeWeekdayToken(evR.weekday) === todayToken);
-
-      // 3) set-based weekly (array of numbers and/or tokens)
+      // set-based weekdays (array of numbers and/or tokens)
       var setMatch = Array.isArray(evR.weekdays) && evR.weekdays.some(function(w){
         if (typeof w === "number") return w === wdToday;
         if (typeof w === "string") return todayToken && normalizeWeekdayToken(w) === todayToken;
         return false;
       });
-
-      // 4) explicit weekdayToken fallback
+      // original token (for categories/lists)
       var tokenMatch = (evR.weekdayToken &&
                         todayToken &&
                         normalizeWeekdayToken(evR.weekdayToken) === todayToken);
@@ -1466,7 +1364,7 @@ function crossRefCalendarForToday(){
     }
   }
 
-  // --- sort and compute ongoing/next (unchanged) ---
+  // sort & ongoing/next (unchanged)
   todayEvents.sort(function(a,b){
     var sa = (a.startMin!=null? a.startMin: 0);
     var sb = (b.startMin!=null? b.startMin: 0);
@@ -1493,12 +1391,12 @@ function crossRefCalendarForToday(){
     nextHolidayDays: (daysUntil != null) ? daysUntil : null
   };
 
-  // --- tiny debug snapshot so we can verify matching if needed ---
+  // tiny debug snapshot
   ATS.calendar._debugWeekly = {
     wdToday: wdToday,
     todayToken: todayToken,
     recEventsCount: recE.length,
-    sampleRec: recE.slice(0, 3) // first 3 for inspection
+    sampleRec: recE.slice(0, 3)
   };
 }
 try{ globalThis.crossRefCalendarForToday = crossRefCalendarForToday; }catch(_){}
